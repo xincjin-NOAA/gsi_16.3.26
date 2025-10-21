@@ -475,6 +475,12 @@ subroutine init_crtm(init_pass,mype_diaghdr,mype,nchanl,nreal,isis,obstype,radmo
     Load_CloudCoeff = .false.
  endif
 
+ write(6,*) 'emily checking n_actual_clouds = ', n_actual_clouds
+ write(6,*) 'emily checking n_clouds_fwd_wk = ', n_clouds_fwd_wk
+ write(6,*) 'emily checking lprecip_wk = ', lprecip_wk
+ write(6,*) 'emily checking fv3_full_hydro = ', fv3_full_hydro
+
+
 ! Set up index for input satellite data array
 
  isatid    = 1  ! index of satellite id

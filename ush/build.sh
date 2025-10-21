@@ -42,6 +42,9 @@ CMAKE_OPTS+=" -DGSI_MODE=$GSI_MODE -DENKF_MODE=${ENKF_MODE}"
 # Build regression test suite (on supported MACHINE_ID where CONTROLPATH exists)
 [[ ${REGRESSION_TESTS} =~ [yYtT] ]] && CMAKE_OPTS+=" -DBUILD_REG_TESTING=ON -DCONTROLPATH=${CONTROLPATH:-}"
 
+# Add USE_BUFR4 for Ursa
+[[ "${MACHINE_ID}" == "ursa" ]] && export USE_BUFR4="ON"
+
 # Re-use or create a new BUILD_DIR (Default: create new BUILD_DIR)
 [[ ${BUILD_CLEAN:-"YES"} =~ [yYtT] ]] && rm -rf $BUILD_DIR
 mkdir -p $BUILD_DIR && cd $BUILD_DIR
