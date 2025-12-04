@@ -336,6 +336,7 @@ contains
        iobs=iobs+1
        return
     end if
+    write(*,*) 'DEBUG: about to assign ibest_obs(itx, ip) = iobs'
 
 !   Compute (i,j,k) indices of coarse mesh grid (grid number 1) which
 !   contains the current observation.
@@ -451,6 +452,18 @@ contains
           itmp=ibest_obs(itx,ip)
           rthin(itmp)=.true.
           score_crit(itx,ip)= crit
+          write(*,*) 'DEBUG: about to assign ibest_obs(itx, ip) = iobs'
+            write(*,*) '  size(ibest_obs,1)=', size(ibest_obs,1)
+            write(*,*) '  size(ibest_obs,2)=', size(ibest_obs,2)
+            write(*,*) '  itx=', itx, '  ip=', ip
+            write(*,*) '  iobs=', iobs
+
+            if (itx < 1 .or. itx > size(ibest_obs,1)) then
+               write(*,*) '  ERROR: itx out of range!'
+            end if
+            if (ip < 1 .or. ip > size(ibest_obs,2)) then
+               write(*,*) '  ERROR: ip out of range!'
+            end if
           ibest_obs(itx,ip)=iobs
 
 !      Case:  first obs at this location,

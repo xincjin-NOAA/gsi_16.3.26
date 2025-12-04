@@ -8,7 +8,9 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
 !   Largely based on other read_* routines. For the  !Winds --- surface wind speed section
 !   ~L438, we used the exixting read_fl_hdob.f90 routine
 !
-! abstract:  This routine reads GNSSRSPD L2 wind speed observations
+! abstract:  This routine reads GNSSRSPD L2 wind speed observations.
+!            it also has options to thin the data by using conventional
+!            thinning programs
 !
 !            When running the gsi in regional mode, the code only
 !            retains those observations that fall within the regional
@@ -43,12 +45,13 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
          tll2xy,txy2ll,rotate_wind_ll2xy,rotate_wind_xy2ll,&
          rlats,rlons,twodvar_regional
      use convinfo, only: nconvtype, &
-         icuse,ictype,ioctype
+         icuse,ictype,ioctype,&
+         ithin_conv,rmesh_conv,pmesh_conv
      use obsmod, only: ran01dom
      use obsmod, only: iadate,bmiss,offtime_data
      use gsi_4dvar, only: l4dvar,l4densvar,time_4dvar,winlen
      use qcmod, only: errormod
-     use convthin, only: make3grids,del3grids
+     use convthin, only: make3grids,map3grids_m,del3grids,use_all
      use ndfdgrids,only: init_ndfdgrid,destroy_ndfdgrid,relocsfcob,adjust_error
      use deter_sfc_mod, only: deter_sfc_type,deter_sfc2
      use mpimod, only: npe
@@ -65,7 +68,8 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
    
 !    Declare local variables
 !    Logical variables
-     logical :: outside 
+     logical :: outside
+     logical luse,ithinp
      logical :: inflate_error
      logical :: lspdob
 
@@ -86,7 +90,9 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      integer(i_kind) :: nlv
      integer(i_kind) :: nreal,nchanl
      integer(i_kind) :: idomsfc,isflg
-     integer(i_kind) :: iout 
+     integer(i_kind) :: iout,ithin
+     integer(i_kind) nlevp         ! vertical level for thinning
+     integer(i_kind) pflag
      integer(i_kind) :: nc,ncsave
      integer(i_kind) :: ntmatch,ntb
      integer(i_kind) :: nmsg   
@@ -125,8 +131,9 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      real(r_kind) :: vdisterrmax
      real(r_kind) :: spdob
      real(r_kind) :: gob
-     real(r_kind) :: dlnpsob
-     real(r_kind) :: tdiff 
+     real(r_kind) :: dlnpsob, ppb
+     real(r_kind) :: tdiff, rmesh
+     real(r_kind) :: crit1,timedif,xmesh,pmesh 
      real(r_kind) :: tsavg,ff10,sfcr,zz
      real(r_kind) :: errmin
      real(r_kind) :: log100  
@@ -139,7 +146,10 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      real(r_double) :: r_prvstg(1,1),r_sprvstg(1,1)
 
      real(r_kind), allocatable,dimension(:,:) :: cdata_all,cdata_out
+     real(r_kind),allocatable,dimension(:):: presl_thin
 
+     logical,allocatable,dimension(:)::rthin,rusage
+     logical save_all
 !    Equivalence to handle character names
      equivalence(r_prvstg(1,1),c_prvstg)
      equivalence(r_sprvstg(1,1),c_sprvstg)
@@ -154,7 +164,8 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      data wndstr   / 'SOB' / !GNSSRSPD Wind speed
      data oestr   / 'WSU' / !GNSSRSPD Wind speed uncertainty/error 
      data lunin    / 13 /
- 
+     data ithin / -9 /
+     data rmesh / -99.999_r_kind /
 !------------------------------------------------------------------------------------------------
 
      write(6,*)'READ_GNSSRSPD: begin to read gnssrspd satellite data ...'
@@ -192,6 +203,7 @@ do nc = 1, nconvtype
             ntmatch = ntmatch + 1
             ncsave  = nc
             itype   = ictype(nc)
+            ithin=ithin_conv(nc)
         end if
     end if
 end do
@@ -229,7 +241,7 @@ end if
 !---------------------------------------------------------------------------------------------------
 
 !    Allocate array to hold data
-     allocate(cdata_all(nreal,maxobs))
+     allocate(cdata_all(nreal,maxobs),rusage(maxobs),rthin(maxobs))
      allocate(isort(maxobs))
 
 !    Initialize
@@ -241,6 +253,26 @@ end if
      nvtest    = 0
      ilon      = 2 
      ilat      = 3 
+
+     rusage = .true.
+     rthin = .false.
+     use_all = .true.
+
+     if (ithin > 0 ) then
+           use_all = .false.
+           rmesh=rmesh_conv(nc)
+           pmesh=pmesh_conv(nc)
+           xmesh=rmesh
+           pflag = 0
+           nlevp = 1
+
+           call make3grids(xmesh,nlevp)
+           
+           allocate(presl_thin(nlevp))
+           write(6,*)'READ_SFCWND: ictype(nc),rmesh,pflag,nlevp,pmesh,nc ',&
+                   ioctype(nc),ictype(nc),rmesh,pflag,nlevp,pmesh,nc
+     endif
+
 
 !    Open bufr file again for reading
      call closbf(lunin)
@@ -378,14 +410,54 @@ end if
 
            ! Get information from surface file necessary for conventional data
            call deter_sfc2(dlat_earth,dlon_earth,t4dv,idomsfc,tsavg,ff10,sfcr,zz)                                                                      
+
+!!    process the thining procedure
+
+!          Read extrapolated surface pressure [pa] and convert to [cb]
+           dlnpsob = log100         ! default (1000mb)
+           ppb=r100
+           presl_thin = r100
+
+!          Special block for data thinning - if requested
+           if (ithin > 0 .and. iuse >=0) then
+
+ !            Set data quality index for thinning
+              timedif=abs(t4dv-toff)
+
+              crit1 = timedif/r6+half
+              ! print each argument with a label before calling the routine
+               write(*,*) 'Calling map3grids_m with:'
+               write(*,*) 'arg1 (int literal)        =', -1
+               write(*,*) 'save_all                 =', save_all
+               write(*,*) 'pflag                    =', pflag
+               write(*,*) 'presl_thin               =', presl_thin
+               write(*,*) 'nlevp                    =', nlevp
+               write(*,*) 'dlat_earth               =', dlat_earth
+               write(*,*) 'dlon_earth               =', dlon_earth
+               write(*,*) 'ppb                      =', ppb
+               write(*,*) 'crit1                    =', crit1
+               write(*,*) 'ndata                    =', ndata
+               write(*,*) 'luse                     =', luse
+               write(*,*) 'maxobs                   =', maxobs
+               ! rthin is an array of length 5
+               write(*,*) 'rthin (size =', size(rthin), ') =', rthin(1:5)
+               write(*,*) 'logical arg (use_thin)   =', .false.
+               write(*,*) 'logical arg (some_flag)  =', .false.
+
+              call map3grids_m(-1,save_all,pflag,presl_thin,nlevp, &
+                  dlat_earth,dlon_earth,ppb,crit1,ndata,&
+                  luse,maxobs,rthin,.false.,.false.)
+
+              if (.not. luse) cycle loop_readsb2
+
+           else
+              ndata=ndata+1
+           endif
+           iout=ndata
+
            ! Process data passed quality control 
            igood = igood + 1
-           ndata = ndata + 1
            nodata = nodata + 1
-           iout = ndata
-
-!         Read extrapolated surface pressure [pa] and convert to [cb]
-           dlnpsob = log100         ! default (1000mb)           
 
 !-------------------------------------------------------------------------------------------------          
 
@@ -423,6 +495,12 @@ end if
         end do loop_readsb2
      end do loop_msg2
 
+!    Deallocate arrays used for thinning data
+
+     if (.not.use_all) then
+        deallocate(presl_thin)
+        call del3grids
+     endif
 !    Close unit to bufr file
      call closbf(lunin)
  
@@ -435,6 +513,8 @@ end if
         end do
      end do
      deallocate(cdata_all)
+     deallocate(rthin)
+     deallocate(rusage)
 
      call count_obs(ndata,nreal,ilat,ilon,cdata_out,nobs)
      write(lunout) obstype,sis,nreal,nchanl,ilat,ilon
