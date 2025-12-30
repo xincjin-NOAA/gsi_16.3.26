@@ -74,7 +74,7 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      logical :: lspdob
 
 !    Character variables
-     character(40) :: timestr,locstr,wndstr,oestr  
+     character(40) :: timestr,locstr,wndstr,oestr, qflagstr,iceflagstr  
      character( 8) :: subset
      character( 8) :: c_prvstg,c_sprvstg
      character( 8) :: c_station_id
@@ -141,7 +141,8 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      real(r_kind) :: obstime(6,1)
      real(r_kind) :: obsloc(2,1)
      real(r_kind) :: gnssrw(2,1)
-      
+     
+     real(r_kind) qc_flag, ice_flag 
      real(r_double) :: rstation_id
      real(r_double) :: r_prvstg(1,1),r_sprvstg(1,1)
 
@@ -163,6 +164,9 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      !data wndstr   / 'WSPD' / !GNSSRSPD Wind speed
      data wndstr   / 'SOB' / !GNSSRSPD Wind speed
      data oestr   / 'WSU' / !GNSSRSPD Wind speed uncertainty/error 
+     data qflagstr   / 'DFQ' / !GNSSRSPD Wind speed uncertainty/error
+     data iceflagstr   / 'DFR' / !GNSSRSPD Wind speed uncertainty/error
+     
      data lunin    / 13 /
      data ithin / -9 /
      data rmesh / -99.999_r_kind /
@@ -183,7 +187,7 @@ subroutine read_gnssrspd(nread,ndata,nodata,infile,obstype,lunout,twind,sis,&
      lim_qm = 4
      iecol=0
      if (lspdob) then
-        nreal  = 23
+        nreal  = 25
         iecol  =  4  
         errmin = one
      else 
@@ -403,13 +407,21 @@ end if
               obserr = max(gnssrw(1,1),1.5_r_kind) ! surface wind speed error
            endif
 
-
+           call ufbint(lunin,qc_flag,1,1,nlv,qflagstr)
+           call ufbint(lunin,ice_flag,1,1,nlv,iceflagstr)
+           
            if ( .not. twodvar_regional) then
               call deter_sfc_type(dlat_earth,dlon_earth,t4dv,isflg,tsavg)
            endif
 
            ! Get information from surface file necessary for conventional data
            call deter_sfc2(dlat_earth,dlon_earth,t4dv,idomsfc,tsavg,ff10,sfcr,zz)                                                                      
+           call deter_sfc2(dlat_earth,dlon_earth,t4dv,idomsfc,tsavg,ff10,sfcr,zz)
+           ! surface and sst QC
+           !if ( isflg /= 0 .or. tsavg < t0c .or. nint(qc_flag) /= 0) then
+           if ( isflg /= 0 .or. tsavg < t0c) then
+              qcm = 10  ! need to get a currect qc number for this
+           endif
 
 !!    process the thining procedure
 
@@ -490,6 +502,8 @@ end if
               cdata_all(21,iout)=zz                     !  terrain height at ob location        
               cdata_all(22,iout)=r_prvstg(1,1)          !  provider name 
               cdata_all(23,iout)=r_sprvstg(1,1)         !  subprovider name 
+              cdata_all(24,iout)=qc_flag                !  quilty flag
+              cdata_all(25,iout)=ice_flag               !  ice flag
            endif 
 
         end do loop_readsb2

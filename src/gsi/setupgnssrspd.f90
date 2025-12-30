@@ -84,7 +84,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
   ! observations collected within hurricanes/tropical cyclones; these
   ! apply only to the regional forecast models (e.g., HWRF); Henry
   ! R. Winterbottom (henry.winterbottom@noaa.gov).
-
+  use obsmod, only: uv_doe_a_213,uv_doe_b_213
   
   implicit none
 
@@ -117,7 +117,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
   real(r_kind) val2,ressw,ress,error,ddiff,dx10,rhgh,prsfc,r0_001
   real(r_kind) sfcchk,prsln2,rwgt,tfact                        
   real(r_kind) thirty,rsig,ratio,residual,obserrlm,obserror
-  real(r_kind) val,valqc,psges,drpx,dlat,dlon,dtime,rlow
+  real(r_kind) val,valqc,psges,drpx,dlat,dlon,dtime,dpresave,rlow
   real(r_kind) cg_gnssrspd,wgross,wnotgross,wgt,arg,exp_arg,term,rat_err2
   real(r_kind) errinv_input,errinv_adjst,errinv_final
   real(r_kind) err_input,err_adjst,err_final
@@ -129,7 +129,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
   integer(i_kind) mm1,ibin,ioff,ioff0
   integer(i_kind) ii,jj,i,nchar,nreal,k,j,l,nty,nn,ikxx
   integer(i_kind) ier,ilon,ilat,ipres,iuob,ivob,id,itime,ikx
-  integer(i_kind) ihgt,iqc,ier2,iuse,ilate,ilone,istnelv,izz,iprvd,isprvd
+  integer(i_kind) ihgt,iqc,ier2,iuse,ilate,ilone,istnelv,izz,iprvd,isprvd,iqcflag,iiceflag
   integer(i_kind) idomsfc,iskint,iff10,isfcr,isli
 
   type(sparr2) :: dhx_dx
@@ -198,7 +198,8 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
   izz=21      ! index of surface height
   iprvd=22    ! index of observation provider
   isprvd=23   ! index of  observation subprovider
-
+  iqcflag=24
+  iiceflag=25
   mm1=mype+1
   scale=one
   rsig=nsig
@@ -236,7 +237,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
   !!awork(:) = zero
 
   do i=1,nobs
-     muse(i)=nint(data(iuse,i)) <= jiter
+     muse(i)=nint(data(iuse,i)) <= jiter .and. nint(data(iqc,i)) < 8
   end do
 
   dup=one
@@ -324,7 +325,12 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
 
 !    Initialize logical     
      z_height = .false.
+     !if ( nty == 260 .or. nty == 261) z_height = .true.
 
+!    nty == 213 is temporarily assigned to SFMR retrieved wind speed from recon
+!    and is subjet to change in the future
+
+     if ( nty == 260 .or. nty == 261 .or. nty == 213) z_height = .true.
 !    Process observations reported with height differently than those
 !    reported with pressure.  Type 260=nacelle 261=tower wind spd are
 !    encoded in NCEP prepbufr files with geometric height above
@@ -380,6 +386,17 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
         pobl     = p1 + (dlnp21/dz21)*dz
         presw    = ten*exp(pobl)
 
+!    Process observations with reported pressure
+     else
+        presw = ten*exp(dpres)
+        dpres = dpres-log(psges)
+        drpx=zero
+        if(nty >= 280 .and. nty < 290)then
+           dpresave=dpres
+           dpres=-goverrd*data(ihgt,i)/tges(1)
+           if(nty < 283)drpx=abs(dpres-dpresave)*factw*thirty
+        end if
+
         prsfc=psges
         prsln2=log(exp(prsltmp(1))/prsfc)
         sfcchk=log(psges)
@@ -414,6 +431,8 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
      end if
 
      ratio_errors=error/(data(ier,i)+drpx+1.0e6_r_kind*rhgh+four*rlow)
+     write(6, *) 'ier, drpx, rhgh, rlow, error, ratio_errors: = ', data(ier,i), &
+             drpx, rhgh,rlow, error, ratio_errors
      
 
 ! Interpolate guess u and v to observation location and time.
@@ -430,7 +449,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
      gnssrspdges=sqrt(ugesin*ugesin+vgesin*vgesin)
 
      iz = max(1, min( int(dpres), nsig))
-     delz = max(zero, min(dpres - float(iz), one))
+     delz = max(zero, min(dpres - real(iz,r_kind), one))
 
      if (save_jacobian) then
 
@@ -535,7 +554,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
         end if
      end do
 
-     !write(6,*) "cygnss: i,luse(i),muse(i)=",i,luse(i),muse(i)
+     write(6,*) "gnssrspd i,luse(i),muse(i), valqc=",i,luse(i),muse(i), valqc
 
      if (luse_obsdiag) then
         call obsdiagNode_set(my_diag, wgtjo=(error*ratio_errors)**2, &
@@ -615,13 +634,13 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
      if(binary_diag .and. ii>0)then
         write(7)'gnssrspd',nchar,nreal,ii,mype,ioff0
         write(7)cdiagbuf(1:ii),rdiagbuf(:,1:ii)
-        deallocate(cdiagbuf,rdiagbuf)
 
         if (twodvar_regional) then
            write(7)cprvstg(1:ii),csprvstg(1:ii)
            deallocate(cprvstg,csprvstg)
         endif
      end if
+     deallocate(cdiagbuf,rdiagbuf)
   end if
 
 ! End of routine
@@ -880,6 +899,8 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
            call nc_diag_metadata("Time",                    sngl(dtime-time_offset))
            call nc_diag_metadata("Prep_QC_Mark",            sngl(data(iqc,i))      )
            call nc_diag_metadata("Prep_Use_Flag",           sngl(data(iuse,i))     )
+           call nc_diag_metadata("QC_Flag",                 sngl(data(iqcflag,i))     )
+           call nc_diag_metadata("ICE_Flag",                sngl(data(iiceflag,i))     )
 !          call nc_diag_metadata("Nonlinear_QC_Var_Jb",     var_jb                 )
            call nc_diag_metadata("Nonlinear_QC_Rel_Wgt",    sngl(rwgt)             )                 
            if(muse(i)) then
@@ -895,7 +916,8 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
            call nc_diag_metadata("Observation",                   sngl(gnssrspdob)      )
            call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   sngl(ddiff)      )
            call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", sngl(gnssrspdob0-gnssrspdges) )
- 
+           call nc_diag_metadata("Observation0", sngl(gnssrspdob0) )
+           call nc_diag_metadata("Obs_guess", sngl(gnssrspdges) )
            if (lobsdiagsave) then
               do jj=1,miter
                  if (odiag%muse(jj)) then
