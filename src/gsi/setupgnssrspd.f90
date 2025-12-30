@@ -431,8 +431,8 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
      end if
 
      ratio_errors=error/(data(ier,i)+drpx+1.0e6_r_kind*rhgh+four*rlow)
-     write(6, *) 'ier, drpx, rhgh, rlow, error, ratio_errors: = ', data(ier,i), &
-             drpx, rhgh,rlow, error, ratio_errors
+     ! write(6, *) 'ier, drpx, rhgh, rlow, error, ratio_errors: = ', data(ier,i), &
+     !        drpx, rhgh,rlow, error, ratio_errors
      
 
 ! Interpolate guess u and v to observation location and time.
@@ -554,7 +554,7 @@ subroutine setupgnssrspd(obsLL,odiagLL,lunin,mype,bwork,awork,nele,nobs,is,conv_
         end if
      end do
 
-     write(6,*) "gnssrspd i,luse(i),muse(i), valqc=",i,luse(i),muse(i), valqc
+     ! write(6,*) "gnssrspd i,luse(i),muse(i), valqc=",i,luse(i),muse(i), valqc
 
      if (luse_obsdiag) then
         call obsdiagNode_set(my_diag, wgtjo=(error*ratio_errors)**2, &
